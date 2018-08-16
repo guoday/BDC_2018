@@ -2,12 +2,12 @@ import sys
 import pandas as pd
 import numpy as np
 import tensorflow as tf
+import utils
 import os
 from sklearn import preprocessing
 from sklearn.preprocessing import OneHotEncoder,LabelEncoder
 from sklearn.model_selection import train_test_split
 import xgboost as xgb
-import networkx as nx
 def create_hparams():
     return tf.contrib.training.HParams(
         #train_iterval=[[1,16],[8,16],[6,14],[4,12],[2,10]],
@@ -44,9 +44,48 @@ def pre_data(hparams,create=True,data_path=None):
         
         return app_launch_df,user_activity_df,user_register_df,video_create_df
 
+def norm(train_df,dev_df,test_df,features):   
+    if features:
+        df=pd.concat([train_df,dev_df,test_df])
+        scaler = preprocessing.QuantileTransformer(random_state=0)
+        scaler.fit(df[features]) 
+        train_df[features]=scaler.transform(train_df[features])
+        test_df[features]=scaler.transform(test_df[features])
+        dev_df[features]=scaler.transform(dev_df[features])
 
+def label_encoder(train_df,dev_df,test_df,features):
+    df=pd.concat([train_df,dev_df,test_df])
+    for f in features:
+        enc=LabelEncoder()
+        enc.fit(df[f])
+        train_df[f]=enc.transform(train_df[f])
+        test_df[f]=enc.transform(test_df[f])
+        dev_df[f]=enc.transform(dev_df[f])
 
-
+def get_gbdt(train_df,dev_df,test_df,features):
+    num=10
+    clf = xgb.XGBClassifier(learning_rate=0.01, n_estimators=num, max_depth=6, min_child_weight=1, gamma=0.5,subsample=0.6,
+                        colsample_bytree=0.6, objective='binary:logistic', scale_pos_weight=1, reg_alpha=1e-05,
+                        reg_lambda=1, seed=0,n_jobs=30)  
+    train_y = np.array(train_df['label'])
+    train_x=train_df[features]
+    dev_x=dev_df[features]
+    test_x=test_df[features]  
+    clf.fit(train_x, train_y)
+    out_df = pd.DataFrame(clf.apply(train_x))
+    out_df.columns = ['G' + str(i) for i in range(1, num + 1)]
+    train_df = pd.concat([train_df, out_df], axis=1)
+    out_df = pd.DataFrame(clf.apply(dev_x))
+    out_df.columns = ['G' + str(i) for i in range(1, num + 1)]
+    dev_df = pd.concat([dev_df, out_df], axis=1)  
+    out_df = pd.DataFrame(clf.apply(test_x))
+    out_df.columns = ['G' + str(i) for i in range(1, num + 1)]
+    test_df = pd.concat([test_df, out_df], axis=1)    
+    
+    
+    features=['G' + str(i) for i in range(1, num + 1)]
+    print(features)
+    return train_df,dev_df,test_df
         
 def create_id(app_launch_df,user_activity_df,user_register_df,video_create_df,interval):
     temp_register=user_register_df[(user_register_df['register_day']>=interval[0])&(user_register_df['register_day']<=interval[1])]
@@ -66,6 +105,12 @@ def create_label(df,app_launch_df,user_activity_df,user_register_df,video_create
         temp=pd.concat([temp_register[['user_id']],temp_activity[['user_id']],temp_launch[['user_id']],temp_create[['user_id']]])
         before_register=user_register_df[(user_register_df['register_day']>=1)&(user_register_df['register_day']<=interval[1])]
         idx=set(temp['user_id'])
+        """
+        idx=set(temp['user_id'])&set(before_register['user_id'])
+        print(len(idx),len(set(df['user_id'])))
+        print(len(set(df['user_id'])&idx)*1.0/len(idx))
+        exit()
+        """
         label=[]
         for val in df['user_id'].values:
             if val in idx:
@@ -76,8 +121,6 @@ def create_label(df,app_launch_df,user_activity_df,user_register_df,video_create
     else:
         df['label']=[-1]*len(df['user_id'])
     return df
-
-
 
 def create_single_features(df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval):
     features=[]
@@ -95,12 +138,6 @@ def create_single_features(df,app_launch_df,user_activity_df,user_register_df,vi
     for key in df:
         df[key]=df[key].astype(int)
     features.extend(['register_day_diff','register_type','device_type']) 
-      
-    #注册时间与启动时间差
-    groupby_min=temp_launch.groupby('user_id').min()['launch_day']
-    df['registet_launch_day_diff']=df['user_id'].apply(lambda x:interval[1]+1-groupby_min[x] if x in groupby_min else np.nan)
-    df['registet_launch_day_diff']=df['register_day_diff']-df['registet_launch_day_diff']
-    features.append('registet_launch_day_diff')  
     
     #启动次数
     groupby_size=temp_launch.groupby('user_id').size()
@@ -145,7 +182,52 @@ def create_single_features(df,app_launch_df,user_activity_df,user_register_df,vi
     df['activity_day_cont']=df['user_id'].apply(lambda x:groupby_size[x] if x in groupby_size else 0)
     df['activity_cont']=df['activity_cont'].apply(lambda x: int(np.log(x+1)/np.log(2)))
     features.append('activity_day_cont')    
-
+      
+    #用户activity记录，01串
+    dic={}
+    groupby_size=dict(temp_activity.groupby(['user_id','activity_day']).size())
+    seq_activity=[]
+    for val in df['user_id']:
+        temp=[]
+        for day in range(interval[0],interval[1]+1):
+            if (val,day) in groupby_size:
+                temp.append('1')
+            else:
+                temp.append('0')
+        seq_activity.append(''.join(temp))
+    df['activity_01']=seq_activity
+    features.append('activity_01')    
+    
+    #用户video记录，01串
+    dic={}
+    groupby_size=dict(temp_create.groupby(['user_id','create_day']).size())
+    seq_create=[]
+    for val in df['user_id']:
+        temp=[]
+        for day in range(interval[0],interval[1]+1):
+            if (val,day) in groupby_size:
+                temp.append('1')
+            else:
+                temp.append('0')
+        seq_create.append(''.join(temp))
+    df['create_01']=seq_create
+    features.append('create_01')  
+    
+    #用户登陆记录，01串
+    dic={}
+    groupby_size=dict(temp_launch.groupby(['user_id','launch_day']).size())
+    seq_launch=[]
+    for val in df['user_id']:
+        temp=[]
+        for day in range(interval[1]-6,interval[1]+1):
+            if (val,day) in groupby_size:
+                temp.append('1')
+            else:
+                temp.append('0')
+        seq_launch.append(''.join(temp))
+    df['launch_01']=seq_launch
+    features.append('launch_01')
+    
     return df,features
     
 def create_seq_features(df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval): 
@@ -217,7 +299,8 @@ def create_num_features(df,app_launch_df,user_activity_df,user_register_df,video
     
 if __name__ == '__main__':
     hparams=create_hparams()
-    app_launch_df,user_activity_df,user_register_df,video_create_df=pre_data(hparams,create=True,data_path=hparams.B_data_path)
+    utils.print_hparams(hparams)
+    app_launch_df,user_activity_df,user_register_df,video_create_df=pre_data(hparams,create=False,data_path=hparams.B_data_path)
         
     #构造训练集，区间是hparams.train_iterval，以后7天做label
     train_dfs=[]
@@ -263,11 +346,11 @@ if __name__ == '__main__':
             train_df,seq_features=\
             create_seq_features(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
             train_dfs.append(train_df)
-            
         train_df=pd.concat(train_dfs)
         
-    encoder_features=['seq_activity','seq_launch']
+    encoder_features=['activity_01','launch_01','create_01']
     label_encoder(train_df,dev_df,test_df,encoder_features)
+
     print('Num Features:',num_features)
     print('Single Features:',single_features)
     print('Sequence Features:',seq_features)
@@ -286,4 +369,3 @@ if __name__ == '__main__':
     
     
     
-
