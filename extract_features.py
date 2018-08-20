@@ -1,99 +1,46 @@
-import sys
-import pandas as pd
-import numpy as np
 import tensorflow as tf
-import utils
+import pandas as pd
+import gc
 import os
-from sklearn import preprocessing
-from sklearn.preprocessing import OneHotEncoder,LabelEncoder
-from sklearn.model_selection import train_test_split
-import xgboost as xgb
+import numpy as np
 def create_hparams():
     return tf.contrib.training.HParams(
-        #train_iterval=[[1,16],[8,16],[6,14],[4,12],[2,10]],
-        train_iterval=[[1,16],[8,23]],
-        test_iterval=[[15,30]],
-        B_data_path="data",
-        A_data_path="A_data",
-        
+        train_iterval=[1,16],
+        dev_iterval=[8,23],
+        test_iterval=[15,30],
+        data_path="/mnt/datasets/fusai/",
         )
+hparams=create_hparams()
 
-def pre_data(hparams,create=True,data_path=None):
-    if create==False:        
-        app_launch_df=pd.read_csv(os.path.join(data_path,'app_launch_log.csv'))
-        user_activity_df=pd.read_csv(os.path.join(data_path,'user_activity_log.csv'))
-        user_register_df=pd.read_csv(os.path.join(data_path,'user_register_log.csv'))
-        video_create_df=pd.read_csv(os.path.join(data_path,'video_create_log.csv'))
-        return app_launch_df,user_activity_df,user_register_df,video_create_df
-    else:
-        app_launch_df=pd.read_csv(os.path.join(data_path,'app_launch_log.txt'),sep='\t',header=None).sort_index(by=[0,1])
-        app_launch_df.columns=['user_id','launch_day']
-        app_launch_df.to_csv(os.path.join(data_path,'app_launch_log.csv'),index=False)
-        
-        user_activity_df=pd.read_csv(os.path.join(data_path,'user_activity_log.txt'),sep='\t',header=None).sort_index(by=[0,1])
-        user_activity_df.columns=['user_id','activity_day','page','video_id','author_id','action_type']
-        user_activity_df.to_csv(os.path.join(data_path,'user_activity_log.csv'),index=False)
-        
-        user_register_df=pd.read_csv(os.path.join(data_path,'user_register_log.txt'),sep='\t',header=None).sort_index(by=[0,1])
-        user_register_df.columns=['user_id','register_day','register_type','device_type']
-        user_register_df.to_csv(os.path.join(data_path,'user_register_log.csv'),index=False)
-        
-        video_create_df=pd.read_csv(os.path.join(data_path,'video_create_log.txt'),sep='\t',header=None).sort_index(by=[0,1])
-        video_create_df.columns=['user_id','create_day']
-        video_create_df.to_csv(os.path.join(data_path,'video_create_log.csv'),index=False)
-        
-        return app_launch_df,user_activity_df,user_register_df,video_create_df
 
-def norm(train_df,dev_df,test_df,features):   
-    if features:
-        df=pd.concat([train_df,dev_df,test_df])
-        scaler = preprocessing.QuantileTransformer(random_state=0)
-        scaler.fit(df[features]) 
-        train_df[features]=scaler.transform(train_df[features])
-        test_df[features]=scaler.transform(test_df[features])
-        dev_df[features]=scaler.transform(dev_df[features])
-
-def label_encoder(train_df,dev_df,test_df,features):
-    df=pd.concat([train_df,dev_df,test_df])
-    for f in features:
-        enc=LabelEncoder()
-        enc.fit(df[f])
-        train_df[f]=enc.transform(train_df[f])
-        test_df[f]=enc.transform(test_df[f])
-        dev_df[f]=enc.transform(dev_df[f])
-
-def get_gbdt(train_df,dev_df,test_df,features):
-    num=10
-    clf = xgb.XGBClassifier(learning_rate=0.01, n_estimators=num, max_depth=6, min_child_weight=1, gamma=0.5,subsample=0.6,
-                        colsample_bytree=0.6, objective='binary:logistic', scale_pos_weight=1, reg_alpha=1e-05,
-                        reg_lambda=1, seed=0,n_jobs=30)  
-    train_y = np.array(train_df['label'])
-    train_x=train_df[features]
-    dev_x=dev_df[features]
-    test_x=test_df[features]  
-    clf.fit(train_x, train_y)
-    out_df = pd.DataFrame(clf.apply(train_x))
-    out_df.columns = ['G' + str(i) for i in range(1, num + 1)]
-    train_df = pd.concat([train_df, out_df], axis=1)
-    out_df = pd.DataFrame(clf.apply(dev_x))
-    out_df.columns = ['G' + str(i) for i in range(1, num + 1)]
-    dev_df = pd.concat([dev_df, out_df], axis=1)  
-    out_df = pd.DataFrame(clf.apply(test_x))
-    out_df.columns = ['G' + str(i) for i in range(1, num + 1)]
-    test_df = pd.concat([test_df, out_df], axis=1)    
+def pre_data(hparams,data_path=None):
+    app_launch_df=pd.read_csv(os.path.join(data_path,'app_launch_log.txt'),sep='\t',header=None,dtype={0:np.int32,1:np.int8}).sort_index(by=[0,1])
+    app_launch_df.columns=['user_id','launch_day']
     
+    user_activity_df=pd.read_csv(os.path.join(data_path,'user_activity_log.txt'),sep='\t',header=None,dtype={0:np.int32,1:np.int8,2:np.int8,3:np.int32,4:np.int32,5:np.int8}).sort_index(by=[0,1])
+    user_activity_df.columns=['user_id','activity_day','page','video_id','author_id','action_type']
     
-    features=['G' + str(i) for i in range(1, num + 1)]
-    print(features)
-    return train_df,dev_df,test_df
+    user_register_df=pd.read_csv(os.path.join(data_path,'user_register_log.txt'),dtype={0:np.int32,1:np.int8},sep='\t',header=None).sort_index(by=[0,1])
+    user_register_df.columns=['user_id','register_day','register_type','device_type']
+    
+    video_create_df=pd.read_csv(os.path.join(data_path,'video_create_log.txt'),sep='\t',header=None,dtype={0:np.int32,1:np.int8}).sort_index(by=[0,1])
+    video_create_df.columns=['user_id','create_day']
+    
+    return app_launch_df,user_activity_df,user_register_df,video_create_df
         
+
 def create_id(app_launch_df,user_activity_df,user_register_df,video_create_df,interval):
-    temp_register=user_register_df[(user_register_df['register_day']>=interval[0])&(user_register_df['register_day']<=interval[1])]
+    temp_register=user_register_df[(user_register_df['register_day']<=interval[1])]
     temp_activity=user_activity_df[(user_activity_df['activity_day']>=interval[0])&(user_activity_df['activity_day']<=interval[1])]
     temp_launch=app_launch_df[(app_launch_df['launch_day']>=interval[0])&(app_launch_df['launch_day']<=interval[1])]
     temp_create=video_create_df[(video_create_df['create_day']>=interval[0])&(video_create_df['create_day']<=interval[1])] 
     df=pd.concat([temp_register[['user_id']],temp_activity[['user_id']],temp_launch[['user_id']],temp_create[['user_id']]])
     df=df.drop_duplicates()
+    del temp_register
+    del temp_activity
+    del temp_launch
+    del temp_create
+    gc.collect()
     return df
 
 def create_label(df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval,train=True):
@@ -105,12 +52,6 @@ def create_label(df,app_launch_df,user_activity_df,user_register_df,video_create
         temp=pd.concat([temp_register[['user_id']],temp_activity[['user_id']],temp_launch[['user_id']],temp_create[['user_id']]])
         before_register=user_register_df[(user_register_df['register_day']>=1)&(user_register_df['register_day']<=interval[1])]
         idx=set(temp['user_id'])
-        """
-        idx=set(temp['user_id'])&set(before_register['user_id'])
-        print(len(idx),len(set(df['user_id'])))
-        print(len(set(df['user_id'])&idx)*1.0/len(idx))
-        exit()
-        """
         label=[]
         for val in df['user_id'].values:
             if val in idx:
@@ -118,254 +59,334 @@ def create_label(df,app_launch_df,user_activity_df,user_register_df,video_create
             else:
                 label.append(0)
         df['label']=label
+        del temp_register
+        del temp_activity
+        del temp_launch
+        del temp_create
+        gc.collect()     
     else:
         df['label']=[-1]*len(df['user_id'])
+   
     return df
 
+
+app_launch_df,user_activity_df,user_register_df,video_create_df=pre_data(hparams,data_path=hparams.data_path)
+
+#构造测试集，区间是hparams.test_iterval
+print("testing",hparams.test_iterval)
+test_df=create_id(app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.test_iterval)
+print("test creating id done!")
+test_df=create_label(test_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.test_iterval,train=False)
+print("test creating label done!")
+
+
+#构造验证集，区间是hparams.dev_iterval，以后7天做label
+print("dev",hparams.dev_iterval)
+dev_df=create_id(app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.dev_iterval)
+print("dev creating id done!")
+dev_df=create_label(dev_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.dev_iterval,train=True)
+print("dev creating label done!")
+
+
+#构造训练集，区间是hparams.train_iterval，以后7天做label
+print("training",hparams.train_iterval)
+train_df=create_id(app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.train_iterval)
+print("train creating id done!")
+train_df=create_label(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.train_iterval,train=True)
+print("train creating label done!")
+
+print("train shape",train_df.shape)
+print("dev shape",dev_df.shape)
+print("test shape",test_df.shape)
+
+###################################
+#############提取单值特征##########
+###################################
 def create_single_features(df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval):
     features=[]
-       
     temp_register=user_register_df[user_register_df['register_day']<=interval[1]]
     temp_activity=user_activity_df[(user_activity_df['activity_day']>=interval[0])&(user_activity_df['activity_day']<=interval[1])]
     temp_launch=app_launch_df[(app_launch_df['launch_day']>=interval[0])&(app_launch_df['launch_day']<=interval[1])]
     temp_create=video_create_df[(video_create_df['create_day']>=interval[0])&(video_create_df['create_day']<=interval[1])]
     
-    #注册时间与预测时间的差值，若区间内无注册，则为-1
-    df=pd.merge(df,temp_register,on='user_id',how='left')
+    #注册时间与预测时间的差值
+    dic={}
+    for item in temp_register[['user_id','register_day','register_type','device_type']].values:
+        dic[item[0]]=(item[1],item[2],item[3])
+
+    df['register_day']=df['user_id'].apply(lambda x:dic[x][0])
     df['register_day_diff']=interval[1]+1-df['register_day']
-    df['register_day_diff']=df['register_day_diff'].apply(lambda x: np.nan if x >interval[1]+1-interval[0] else x)
-    df=df.fillna(-1)
-    for key in df:
-        df[key]=df[key].astype(int)
+    df['register_type']=df['user_id'].apply(lambda x:dic[x][1])
+    df['device_type']=df['user_id'].apply(lambda x:dic[x][2])
+    df['register_day_diff']=df['register_day_diff'].apply(lambda x: min(x,interval[1]+1-interval[0]))
+    del dic
+    gc.collect()
     features.extend(['register_day_diff','register_type','device_type']) 
+
     
     #启动次数
     groupby_size=temp_launch.groupby('user_id').size()
-    df['launch_cont']=df['user_id'].apply(lambda x:groupby_size[x] if x in groupby_size else -1)
+    df['launch_cont']=df['user_id'].apply(lambda x:groupby_size[x] if x in groupby_size else 0)
     features.append('launch_cont')
+    del groupby_size
+    gc.collect()  
     
     #最近启动时间差
     groupby_max=temp_launch.groupby('user_id').max()['launch_day']
-    df['launch_day_diff']=df['user_id'].apply(lambda x:interval[1]+1-groupby_max[x] if x in groupby_max else -1)
+    df['launch_day_diff']=df['user_id'].apply(lambda x:interval[1]+1-groupby_max[x] if x in groupby_max else interval[1]+1-interval[0])
     features.append('launch_day_diff')
+    del groupby_max
+    gc.collect() 
     
     #video创建次数
     groupby_size=temp_create.groupby('user_id').size()
     df['create_cont']=df['user_id'].apply(lambda x:groupby_size[x] if x in groupby_size else 0)
-    df['create_cont']=df['create_cont'].apply(lambda x: int(np.log(x+1)/np.log(2)))
     features.append('create_cont')
+    del groupby_size
+    gc.collect()  
     
     #video天数
     temp_df=temp_create[['user_id','create_day']].drop_duplicates()
     groupby_size=temp_df.groupby('user_id').size()
     df['create_day_cont']=df['user_id'].apply(lambda x:groupby_size[x] if x in groupby_size else 0)
     features.append('create_day_cont')
+    del temp_df
+    del groupby_size
+    gc.collect() 
     
     #最近启动时间差
     groupby_max=temp_create.groupby('user_id').max()['create_day']
-    df['create_day_diff']=df['user_id'].apply(lambda x:interval[1]+1-groupby_max[x] if x in groupby_max else -1)
+    df['create_day_diff']=df['user_id'].apply(lambda x:interval[1]+1-groupby_max[x] if x in groupby_max else interval[1]+1-interval[0])
     features.append('create_day_diff')
-
+    del groupby_max
+    gc.collect() 
+    
     #活动次数
     groupby_size=temp_activity.groupby('user_id').size()
     df['activity_cont']=df['user_id'].apply(lambda x:groupby_size[x] if x in groupby_size else 0)
     features.append('activity_cont')
+    del groupby_size
+    gc.collect()  
     
     #最近活动时间差
     groupby_max=temp_activity.groupby('user_id').max()['activity_day']
-    df['activity_day_diff']=df['user_id'].apply(lambda x:interval[1]+1-groupby_max[x] if x in groupby_max else -1)
+    df['activity_day_diff']=df['user_id'].apply(lambda x:interval[1]+1-groupby_max[x] if x in groupby_max else interval[1]+1-interval[0])
     features.append('activity_day_diff')
+    del groupby_max
+    gc.collect()  
     
     #活跃天数
     temp_df=temp_activity[['user_id','activity_day']].drop_duplicates()
     groupby_size=temp_df.groupby('user_id').size()
     df['activity_day_cont']=df['user_id'].apply(lambda x:groupby_size[x] if x in groupby_size else 0)
-    df['activity_cont']=df['activity_cont'].apply(lambda x: int(np.log(x+1)/np.log(2)))
     features.append('activity_day_cont')    
-      
-    #用户activity记录，01串
-    dic={}
-    groupby_size=dict(temp_activity.groupby(['user_id','activity_day']).size())
-    seq_activity=[]
-    for val in df['user_id']:
-        temp=[]
-        for day in range(interval[0],interval[1]+1):
-            if (val,day) in groupby_size:
-                temp.append('1')
-            else:
-                temp.append('0')
-        seq_activity.append(''.join(temp))
-    df['activity_01']=seq_activity
-    features.append('activity_01')    
+    del temp_df
+    del groupby_size
+    gc.collect() 
     
-    #用户video记录，01串
-    dic={}
-    groupby_size=dict(temp_create.groupby(['user_id','create_day']).size())
-    seq_create=[]
-    for val in df['user_id']:
-        temp=[]
-        for day in range(interval[0],interval[1]+1):
-            if (val,day) in groupby_size:
-                temp.append('1')
-            else:
-                temp.append('0')
-        seq_create.append(''.join(temp))
-    df['create_01']=seq_create
-    features.append('create_01')  
+    del temp_register
+    del temp_activity
+    del temp_launch
+    del temp_create
+    gc.collect()    
     
-    #用户登陆记录，01串
-    dic={}
-    groupby_size=dict(temp_launch.groupby(['user_id','launch_day']).size())
-    seq_launch=[]
-    for val in df['user_id']:
-        temp=[]
-        for day in range(interval[1]-6,interval[1]+1):
-            if (val,day) in groupby_size:
-                temp.append('1')
-            else:
-                temp.append('0')
-        seq_launch.append(''.join(temp))
-    df['launch_01']=seq_launch
-    features.append('launch_01')
     
     return df,features
-    
+
+#测试集提取单值特征
+print("testing",hparams.test_iterval)
+test_df,_=create_single_features(test_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.test_iterval)
+print("test creating single features done!")
+
+
+
+#验证集提取单值特征
+print("dev",hparams.dev_iterval)
+dev_df,_=create_single_features(dev_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.dev_iterval)
+print("dev creating single features done!")
+
+
+
+#训练集提取单值特征
+print("training",hparams.train_iterval)
+train_df,single_features=create_single_features(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.train_iterval)
+print("train creating single features done!")
+
+
+print("train shape",train_df.shape)
+print("dev shape",dev_df.shape)
+print("test shape",test_df.shape)
+print("single features v1",single_features)
+
+
+###################################
+#############提取序列特征##########
+###################################
+from collections import Counter
 def create_seq_features(df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval): 
     features=[]    
     temp_register=user_register_df[(user_register_df['register_day']>=interval[0])&(user_register_df['register_day']<=interval[1])]
     temp_activity=user_activity_df[(user_activity_df['activity_day']>=interval[0])&(user_activity_df['activity_day']<=interval[1])]
     temp_launch=app_launch_df[(app_launch_df['launch_day']>=interval[0])&(app_launch_df['launch_day']<=interval[1])]
-    temp_video=video_create_df[(video_create_df['create_day']>=interval[0])&(video_create_df['create_day']<=interval[1])] 
-
+    temp_create=video_create_df[(video_create_df['create_day']>=interval[0])&(video_create_df['create_day']<=interval[1])] 
     
-    #用户activity记录，时间差+当天创建总数
-    dic={}
-    groupby_size=dict(temp_activity.groupby(['user_id','activity_day']).size())
-    seq_activity=[]
-    for val in df['user_id']:
-        temp=[]
-        for day in range(interval[1]-6,interval[1]+1):
-            if (val,day) in groupby_size:
-                temp.append(str(interval[1]+1-day)+'_'+str(int(np.log(groupby_size[(val,day)]+1)/np.log(2))))
-        if len(temp)==0:
-            temp.append('UNK_UNK')
-        seq_activity.append(' '.join(temp))
-    df['seq_activity']=seq_activity
-    features.append('seq_activity')
-
-
-
-    #用户登陆记录, 时间差+时间间隔
-        
-    dic={}
-    groupby_size=dict(temp_launch.groupby(['user_id','launch_day']).size())
-    seq_launch=[]
-    for val in df['user_id']:
-        temp=[]
-        for day in range(interval[1]-6,interval[1]+1):
-            if (val,day) in groupby_size:
-                temp.append(str(interval[1]+1-day))
-        if len(temp)==0:
-            temp.append('UNK')
-        seq_launch.append(' '.join(temp))
-    df['seq_launch']=seq_launch
-    features.append('seq_launch')
+    activity_groupby=temp_activity[['user_id','activity_day']].groupby('user_id')
+    activity_groupby=activity_groupby.apply(lambda x: list(x['activity_day']))
+    create_groupby=temp_create[['user_id','create_day']].groupby('user_id')
+    create_groupby=create_groupby.apply(lambda x: list(x['create_day']))
+    launch_groupby=temp_launch[['user_id','launch_day']].groupby('user_id')
+    launch_groupby=launch_groupby.apply(lambda x: list(x['launch_day']))
     
-
-    return df,features        
+    def f(x):
+        days=set()
+        if x in launch_groupby:
+            days=days|set(launch_groupby[x])
+        if x in create_groupby:
+            days=days|set(create_groupby[x])
+        if x in activity_groupby:
+            days=days|set(activity_groupby[x])
+        temp=[]
+        for i in range(interval[1]-6,interval[1]+1):
+            if i in days:
+                temp.append(str(interval[1]+1-i)+'_'+'1')
+            else:
+                temp.append(str(interval[1]+1-i)+'_'+'0')
+                
+        return ' '.join(temp)  
+    df['active_seq']=df['user_id'].apply(f) 
+    features.append('active_seq')
+    
+    def f(x):
+        days=[]
+        if x in create_groupby:
+            days=create_groupby[x]
+        days=dict(Counter(days))
+        temp=[]
+        for i in range(interval[1]-6,interval[1]+1):
+            if i in days:
+                temp.append(str(interval[1]+1-i)+'_'+str(int(np.log(days[i]+1)/np.log(2))))
+            else:
+                temp.append(str(interval[1]+1-i)+'_'+'0')
+                
+        return ' '.join(temp)  
         
+    df['create_seq']=df['user_id'].apply(f) 
+    features.append('create_seq')
+    def f(x):
+        days=[]
+        if x in activity_groupby:
+            days=activity_groupby[x]
+        days=dict(Counter(days))
+        temp=[]
+        for i in range(interval[1]-6,interval[1]+1):
+            if i in days:
+                temp.append(str(interval[1]+1-i)+'_'+str(days[i]))
+            else:
+                temp.append(str(interval[1]+1-i)+'_'+'0')
+                
+        return ' '.join(temp)  
+    df['activity_seq']=df['user_id'].apply(f) 
+    features.append('activity_seq')
+    
+    del temp_register
+    del temp_activity
+    del temp_launch
+    del temp_create
+    gc.collect()    
+    
+    return df,features   
+
+
+
+#测试集提取序列特征
+print("testing",hparams.test_iterval)
+test_df,_=create_seq_features(test_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.test_iterval)
+print("test creating seq features done!")
+
+
+
+#验证集提取序列特征
+print("dev",hparams.dev_iterval)
+dev_df,_=create_seq_features(dev_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.dev_iterval)
+print("dev creating seq features done!")
+
+
+
+#训练集提取序列特征
+print("training",hparams.train_iterval)
+train_df,seq_features=create_seq_features(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.train_iterval)
+print("train creating seq features done!")
+
+
+print("train shape",train_df.shape)
+print("dev shape",dev_df.shape)
+print("test shape",test_df.shape)
+print("seq features v1",seq_features)
+
+
+
+
+###################################
+###########提取浮点数特征##########
+###################################
 def create_num_features(df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval):   
     features=[]    
     temp_register=user_register_df[(user_register_df['register_day']>=interval[0])&(user_register_df['register_day']<=interval[1])]
     temp_activity=user_activity_df[(user_activity_df['activity_day']>=interval[0])&(user_activity_df['activity_day']<=interval[1])]
     temp_launch=app_launch_df[(app_launch_df['launch_day']>=interval[0])&(app_launch_df['launch_day']<=interval[1])]
-    temp_video=video_create_df[(video_create_df['create_day']>=interval[0])&(video_create_df['create_day']<=interval[1])] 
-    temp_activity['activity_day_diff']=interval[1]-temp_activity['activity_day']
-    activity_groupby=temp_activity.groupby(['user_id'])
-    var_groupby=activity_groupby.apply(lambda x: abs(np.var(np.fft.fft(x['activity_day_diff'])))) 
-    mean_groupby=activity_groupby.apply(lambda x: abs(np.mean(np.fft.fft(x['activity_day_diff'])))) 
-    median_groupby=activity_groupby.apply(lambda x: abs(np.median(np.fft.fft(x['activity_day_diff'])))) 
-    max_groupby=activity_groupby.apply(lambda x: abs(np.max(np.fft.fft(x['activity_day_diff'])))) 
-    min_groupby=activity_groupby.apply(lambda x: abs(np.min(np.fft.fft(x['activity_day_diff'])))) 
-    df['activity_day_diff_var']=df['user_id'].apply(lambda x:var_groupby[x] if x in var_groupby else np.nan)
-    df['activity_day_diff_mean']=df['user_id'].apply(lambda x:mean_groupby[x] if x in mean_groupby else np.nan)
-    df['activity_day_diff_median']=df['user_id'].apply(lambda x:median_groupby[x] if x in median_groupby else np.nan)
-    df['activity_day_diff_max']=df['user_id'].apply(lambda x:max_groupby[x] if x in max_groupby else np.nan)
-    df['activity_day_diff_min']=df['user_id'].apply(lambda x:min_groupby[x] if x in min_groupby else np.nan)
-    features.extend(['activity_day_diff_var','activity_day_diff_mean','activity_day_diff_median','activity_day_diff_max','activity_day_diff_min']) 
+    temp_create=video_create_df[(video_create_df['create_day']>=interval[0])&(video_create_df['create_day']<=interval[1])] 
+    
+    activity_groupby=temp_activity[['user_id','activity_day']].drop_duplicates().groupby('user_id')
+    activity_groupby=activity_groupby.apply(lambda x: set(x['activity_day']))
+    create_groupby=temp_create[['user_id','create_day']].drop_duplicates().groupby('user_id')
+    create_groupby=create_groupby.apply(lambda x: set(x['create_day']))
+    launch_groupby=temp_launch[['user_id','launch_day']].drop_duplicates().groupby('user_id')
+    launch_groupby=launch_groupby.apply(lambda x: set(x['launch_day']))
+    
+
+    df['active_day_fft_min']=df['active_days'].apply(lambda x:abs(np.min(x)))
+    features.append('active_day_fft_min') 
+    df['active_day_fft_max']=df['active_days'].apply(lambda x:abs(np.max(x)))
+    features.append('active_day_fft_max')
+    df['active_day_fft_mean']=df['active_days'].apply(lambda x:abs(np.mean(x)))
+    features.append('active_day_fft_mean')
+    df['active_day_fft_var']=df['active_days'].apply(lambda x:abs(np.var(x)))
+    features.append('active_day_fft_var')
+    df['active_day_fft_median']=df['active_days'].apply(lambda x:abs(np.median(x)))
+    features.append('active_day_fft_median')
+
+    del temp_register
+    del temp_activity
+    del temp_launch
+    del temp_create
+    gc.collect()     
     return df,features
-    
-    
-    
-if __name__ == '__main__':
-    hparams=create_hparams()
-    utils.print_hparams(hparams)
-    app_launch_df,user_activity_df,user_register_df,video_create_df=pre_data(hparams,create=False,data_path=hparams.B_data_path)
-        
-    #构造训练集，区间是hparams.train_iterval，以后7天做label
-    train_dfs=[]
-    for interval in hparams.train_iterval:
-        train_df=create_id(app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-        train_df=create_label(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval,train=True)
-        train_df,num_features=\
-        create_num_features(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-        train_df,single_features=\
-        create_single_features(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-        train_df,seq_features=\
-        create_seq_features(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-        train_dfs.append(train_df)
 
-    train_df=pd.concat(train_dfs)
-    
-    #构造测试集，区间是hparams.test_iterval
-    test_dfs=[]
-    for interval in hparams.test_iterval:
-        test_df=create_id(app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-        test_df=create_label(test_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval,train=False)
-        test_df,num_features=\
-        create_num_features(test_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-        test_df,single_features=\
-        create_single_features(test_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-        test_df,seq_features=\
-        create_seq_features(test_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-        test_dfs.append(test_df)
-    test_df=pd.concat(test_dfs)   
-    
-    train_df, dev_df,_,_ = train_test_split(train_df,train_df,test_size=0.1, random_state=2018)
-    if hparams.A_data_path:
-        app_launch_df,user_activity_df,user_register_df,video_create_df=pre_data(hparams,create=True,data_path=hparams.A_data_path)        
-        train_dfs=[]
-        train_dfs.append(train_df)
-        for interval in hparams.train_iterval:
-            train_df=create_id(app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-            train_df=create_label(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval,train=True)
-            train_df,num_features=\
-            create_num_features(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-            train_df,single_features=\
-            create_single_features(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-            train_df,seq_features=\
-            create_seq_features(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,interval)
-            train_dfs.append(train_df)
-        train_df=pd.concat(train_dfs)
-        
-    encoder_features=['activity_01','launch_01','create_01']
-    label_encoder(train_df,dev_df,test_df,encoder_features)
 
-    print('Num Features:',num_features)
-    print('Single Features:',single_features)
-    print('Sequence Features:',seq_features)
-    train_df.to_csv(os.path.join(hparams.B_data_path,'train.csv'),index=False)
-    dev_df.to_csv(os.path.join(hparams.B_data_path,'dev.csv'),index=False)
-    test_df.to_csv(os.path.join(hparams.B_data_path,'test.csv'),index=False)
-    
-        
-        
-        
-        
-        
-        
-    
-    
-    
-    
-    
+#测试集提取浮点数特征
+print("testing",hparams.test_iterval)
+test_df,_=create_num_features(test_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.test_iterval)
+print("test creating num features done!")
+
+
+
+#验证集提取浮点数特征
+print("dev",hparams.dev_iterval)
+dev_df,_=create_num_features(dev_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.dev_iterval)
+print("dev creating num features done!")
+
+
+
+#训练集提取浮点数特征
+print("training",hparams.train_iterval)
+train_df,num_features=create_num_features(train_df,app_launch_df,user_activity_df,user_register_df,video_create_df,hparams.train_iterval)
+print("train creating num features done!")
+
+
+print("train shape",train_df.shape)
+print("dev shape",dev_df.shape)
+print("test shape",test_df.shape)
+print("num features v1",num_features)
+train_df.to_csv('/home/kesci/train.csv',index=False)
+dev_df.to_csv('/home/kesci/dev.csv',index=False)
+test_df.to_csv('/home/kesci/test.csv',index=False)
